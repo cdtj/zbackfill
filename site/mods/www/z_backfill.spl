@@ -1,0 +1,111 @@
+///////////////////////////////////////////////////////////////////////////////////////////////
+//
+//	Universal backfill mechanizm
+//
+//	2017-05-04: Released
+//
+//	2019-11-20: Moved to get_val to avoid SPEL WS API
+//
+///////////////////////////////////////////////////////////////////////////////////////////////
+//
+//	cdtj71@gmail.com
+//
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+#define MSG_ERROR for(msg_i=0;msg_i<msg_length();msg_i++) { logf(ERROR, "msg[%d]: %s", msg_i, msg[msg_i]); }
+#define MSG_SIGN for(msg_i=0;msg_i<msg_length();msg_i++) { logf(SIGNIFICANT, "msg[%d]: %s", msg_i, msg[msg_i]); }
+#define MSG_BOTH if (msg_error()) { MSG_ERROR } else { MSG_SIGN }
+
+z_backfill(...) {
+	long some_id;
+	object new_obj;
+	string result;
+
+	some_id = argv[0];
+	new_obj = argv[1];
+
+	result = "<json>{\n" + 
+		z_backfill_call(new_obj.SREL_ATTR_VAL, new_obj.FACTORY, new_obj.SREL_ATTR, new_obj.QUERY) +
+		"}\n</json>";
+
+	send_frame_resp((long)some_id, (object)new_obj, (string)result);
+}
+
+string z_backfill_call(string obj_id, string factory, string srel_attr, string query) {
+	string result, input, pdmqa, srel_factory;
+	int msg_i, session_ended;
+	object zobj;
+
+	session_ended = is_session_end();
+	
+	result = "";
+
+	send_wait(0, top_object(), "call_attr", factory, "dob_attr_type_info", srel_attr);
+	if (msg_error()) {
+		MSG_ERROR
+		return "";
+	}
+	// msg[2] - factory;
+	srel_factory = msg[2];
+
+	send_wait(0, top_object(), "call_attr", srel_factory, "val_by_key", "REL_ATTR", obj_id, 1, "persistent_id");
+	if (msg_error()) {
+		MSG_ERROR
+		return "";
+	}
+	if (is_null(zobj = z_obj_by_persid(msg[1]))) {
+		MSG_ERROR
+		return "";
+	}
+
+	while(sindex(query, ":") > -1) {
+		input = substr(query, 0, (sindex(query, ':')));
+		query = substr(query, (sindex(query, ':') + 1));
+		
+		pdmqa = format("%s.%s", srel_attr, input);
+		
+		if (session_ended) {
+			result += format("\t\"%s\" : \"%s\"", pdmqa, "SESSION_ERROR");
+		} else {
+			// Avoid NR brels
+			if (sindex(pdmqa, "assoc") == -1) {
+				send_wait(0, top_object(), "call_attr", factory, "dob_attr_type_info", pdmqa);
+				if (msg_error()) {
+					MSG_ERROR
+					return "";
+				} else {
+					if (msg[1] == "SREL") {
+						input += "." + z_get_common(msg[2]);
+					}
+				}
+			} else {
+				input = substr(input, 0, sindex(input, "\\.", sindex(input, "assoc") + 1)) + ".0" + substr(input, sindex(input, "\\.", sindex(input, "assoc") + 1));
+			}
+			logf(INFORMATION, "%s > input: %s", zobj.persistent_id, input);
+			send_wait(0, zobj, "call_attr", input, "get_val");
+			// msg[0] - count;
+			// msg[1] - value;
+			if (msg_error()) {
+				MSG_ERROR
+				result += format("\t\"%s\" : \"%s\"", pdmqa, "");
+			} else {
+				result += format("\t\"%s\" : \"%s\"", pdmqa, z_format_to_line(format_to_js((string)msg[0])));
+			}
+			if (sindex(query, ":") > -1)
+				result += ", \n";
+			else
+				result += " \n";
+		}
+	}
+	logf(TRACE, result);
+	return result;
+}
+
+string z_get_common(string fac) {
+	int msg_i;
+	send_wait(0, top_object(), "attr_type_info", fac);
+	if (!msg_error()) {
+		return msg[4];
+	}
+	MSG_ERROR
+}

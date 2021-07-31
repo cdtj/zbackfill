@@ -1,0 +1,141 @@
+<PDM_IF 0>
+//////////////////////////////////////////
+//	backfiller
+//////////////////////////////////////////
+//
+//	v.1.1 - 2017-05-10:
+//		- added jQuery alias;
+//	v.1.2 - 2017-10-14:
+//		- removed action_in_progress;
+//
+//////////////////////////////////////////
+//
+//	2017-05-04
+//	cdtj71@gmail.com
+//
+//////////////////////////////////////////
+</PDM_IF>
+
+// Recheck interval, ms;
+// Would be great to catch onchange event but prop_forms.js modifications will force us to merge it manually on every patch.
+var zRecheckInt = 700;
+// $ is pre-processor reserved but already know
+if (typeof(jq) == "undefined")
+	jq = jQuery.noConflict();
+
+jq(document).ready(function() {
+	// need this only while form is in edit mode
+	if (_dtl.edit) {
+		zInitBackfill();
+	}
+});
+
+function zInitBackfill() {
+	const bfObjects = [];
+	// adding all inputs to check pull
+	jq("[type=text]").each(function() {
+		const attrName = jq(this).attr("pdmqa");
+		if (attrName) {
+			const attrChilds = [];
+			jq("[pdmqa^='" + attrName + ".']").each(function() {
+				const childName = jq(this).attr("pdmqa");
+				attrChilds.push(childName);
+			});
+			if (attrChilds.length > 0) {
+				bfObjects.push({
+					key: attrName,
+					attrs: attrChilds,
+					val: zGetAttrValue(attrName)
+				});
+			}
+		}
+	});
+	jq.each(bfObjects, function(index, bfObject) {
+		zSetupBackfill(bfObject);
+	});
+}
+
+function zGetAttrValue(name) {
+	return jq("[pdmqa='" + name + "']").parent().children("[name='SET." + name + "']").val();
+}
+
+
+function zSetupBackfill(bfObject) {
+	const backfillInterval = setInterval(compareWithPrev, zRecheckInt);
+	function compareWithPrev() {
+		const currentVal = zGetAttrValue(bfObject.key);
+		console.log("current:", currentVal, "bfVal:", bfObject.val);
+		if (currentVal != bfObject.val) {
+			if (currentVal) {
+				// clearing inteval to prevent re-check when the previous fetch is in progress
+				clearInterval(backfillInterval);
+				bfObject.val = currentVal;
+				zFetchBackfillData(bfObject);
+			} else {
+				jq.each(bfObject.attrs, function(index, attr) {
+					switch(jq("[pdmqa='" + attr + "']").prop("tagName").toUpperCase()) {
+						case "INPUT":
+						case "TEXTAREA":
+							jq("[pdmqa='" + attr + "']").val("").change();
+							break;
+						default:
+							jq("[pdmqa='" + attr + "']").html("&nbsp;");
+					}
+				});
+				bfObject.val = currentVal;
+			}
+		}
+	}
+}
+
+function zFetchBackfillData(bfObject) {
+	var query = "";
+	const attrs = bfObject.attrs;
+	const srelAttr = attrs[0].substr(0, attrs[0].indexOf("."));
+	// lovely sweet IE8
+	jq.each(attrs, function(index, attr) {
+		query += attr.substr(attr.indexOf(".") + 1) + ":";
+	});
+	var url = cfgCgi +
+		"?SID=" + cfgSID +
+		"+FID=" + fid_generator() +
+		"+OP=Z_BACKFILL" +
+		"+FACTORY=" + "$args.producer_id" +
+		"+PERSID=" + "$args.persistent_id" +
+		"+CALLBACK=null" +
+		"+POPUP_NAME=" + "$args.KEEP.POPUP_NAME" +
+		"+SREL_ATTR=" + srelAttr +
+		"+SREL_ATTR_VAL=" + bfObject.val +
+		"+QUERY=" + query +
+		"";
+	console.log("url: " + url);
+	try {
+		jq.ajax({ 
+			type: 'GET', 
+			url: url, 
+			dataType: 'text',
+			success: function (data) {
+				const sindex = data.lastIndexOf("<json>");
+				const eindex = data.indexOf("</json>", sindex);
+				if (sindex == -1 || eindex == -1) {
+					throw "Server response doesn't match signature:" + data;
+				}
+				const respData = jq.parseJSON(data.substring(sindex + 6, eindex));
+				jq.each(attrs, function(index, attr) {
+					switch(jq("[pdmqa='" + attr + "']").prop("tagName").toUpperCase()) {
+						case "INPUT":
+						case "TEXTAREA":
+							// triggering change to also affect hidden inputs
+							jq("[pdmqa='" + attr + "']").val(respData[attr]).change();
+							break;
+						default:
+							jq("[pdmqa='" + attr + "']").text(respData[attr]);
+					}
+				});
+				zSetupBackfill(bfObject);
+			}
+		});
+	} catch (e) {
+		console.error("Data fetch failed:", e);
+	}
+}
