@@ -11,6 +11,8 @@ Written mostly using jQuery years ago and should work even with IE8. Posting thi
 
 Keep folder structure as specified. Merge `op_custom.cfg` with your own if you have one.
 
+[zspel is required](https://github.com/cdtj/zspel)
+
 ## Bonus
 
 Can be used to fill related inputs on-the-go.
